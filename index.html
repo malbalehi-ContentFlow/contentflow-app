@@ -6141,6 +6141,30 @@ nav('overview');
     if (lp && !lp.value) lp.value = 'demo123';
   })();
 
+  /* ---- tertiary "Use demo" button inside the Demo access card ---- */
+  (function demoFillButton() {
+    var head = document.querySelector('#loginPage .login-demo .ld-head');
+    if (!head || document.getElementById('cfDemoFill')) return;
+    head.style.display = 'flex';
+    head.style.alignItems = 'center';
+    head.style.justifyContent = 'space-between';
+    var btn = document.createElement('button');
+    btn.id = 'cfDemoFill';
+    btn.type = 'button';
+    btn.textContent = 'Use demo →';
+    btn.style.cssText = 'background:transparent;border:1px solid var(--line,#e7e7ef);'
+      + 'color:var(--indigo,#571FE4);font-size:11px;font-weight:600;padding:4px 10px;'
+      + 'border-radius:7px;cursor:pointer;font-family:inherit;line-height:1';
+    btn.onclick = function () {
+      var e = document.getElementById('loginEmail'), p = document.getElementById('loginPass');
+      if (e) e.value = 'demo@contentflow.com';
+      if (p) p.value = 'demo123';
+      if (e) e.focus();
+      cfToast('Demo credentials filled', 'Now click “Sign in to ContentFlow”', 'ok');
+    };
+    head.appendChild(btn);
+  })();
+
   /* ---- ContentFlow platform status — pinned to the bottom of the login panel ----
      Shows only the services that power sign-in & the dashboard (gateway, auth,
      campaign manager, dynamic blocks) — NOT the SDK delivery backend the
