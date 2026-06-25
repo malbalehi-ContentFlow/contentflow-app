@@ -6066,7 +6066,7 @@ nav('overview');
    structures, and re-renders with the app's own functions. */
 (function () {
   if (window.__cfInit) return; window.__cfInit = true;   // run once, never multi-wrap
-  var DEFAULT_API = 'https://34d136bf92a421.lhr.life';
+  var DEFAULT_API = 'https://api.contentflow.click';
   var qp = new URLSearchParams(location.search).get('api');
   function hostOf(u) { return String(u).replace(/^https?:\/\//, ''); }
   var API = qp || DEFAULT_API;       // refined from ./api.json below unless ?api= is given
