@@ -6065,10 +6065,12 @@ nav('overview');
    API Gateway. Non-destructive: overrides globals, mutates existing data
    structures, and re-renders with the app's own functions. */
 (function () {
-  var DEFAULT_API = 'https://b90c1121716e9a.lhr.life';
+  if (window.__cfInit) return; window.__cfInit = true;   // run once, never multi-wrap
+  var DEFAULT_API = 'https://3765818f54d969.lhr.life';
   var qp = new URLSearchParams(location.search).get('api');
-  var API = qp || localStorage.getItem('cf_api') || DEFAULT_API;
-  if (qp) localStorage.setItem('cf_api', qp);     // ?api=... overrides without redeploy
+  function hostOf(u) { return String(u).replace(/^https?:\/\//, ''); }
+  var API = qp || DEFAULT_API;       // refined from ./api.json below unless ?api= is given
+  var HOST = hostOf(API);
   var ADMIN_KEY = 'sk_live_demo', SDK_KEY = 'pk_live_demo';
   window.CF = { API: API, token: null };
 
@@ -6083,47 +6085,35 @@ nav('overview');
   }
 
   /* ---- real auth: invalid credentials are rejected, only a verified login enters ---- */
-  var origSignIn = window.signIn;
+  // Toggle into the app directly (mirrors the prototype's signIn) — no dependency
+  // on the original function, so it can't be broken by wrapping order.
+  function enterApp() {
+    ['loginPage', 'signupPage', 'onboardingFlow'].forEach(function (id) {
+      var el = document.getElementById(id); if (el) el.style.display = 'none';
+    });
+    var app = document.getElementById('appShell'); if (app) app.style.display = 'flex';
+    try { if (typeof renderOverview === 'function') renderOverview(); } catch (e) {}
+    try { if (typeof applyViewState === 'function') applyViewState(); } catch (e) {}
+  }
   window.signIn = function () {
     var email = ((document.getElementById('loginEmail') || {}).value || '').trim();
     var pass = (document.getElementById('loginPass') || {}).value || '';
-    if (!email || !pass) {
-      if (typeof showToast === 'function') showToast('Sign in failed', 'Enter your email and password');
-      return;
-    }
+    if (!email || !pass) { if (typeof showToast === 'function') showToast('Sign in failed', 'Enter your email and password'); return; }
     jpost('/auth/login', { email: email, password: pass }).then(function (r) {
-      if (r.ok && r.data && r.data.token) {
-        window.CF.token = r.data.token;
-        origSignIn();          // only a verified login enters the app
-        refreshAll();
-      } else {
-        if (typeof showToast === 'function') showToast('Sign in failed', (r.data && r.data.error) || 'Invalid email or password');
-      }
-    }).catch(function () {
-      if (typeof showToast === 'function') showToast('Sign in unavailable', 'Could not reach the server — try again');
-    });
+      if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; enterApp(); refreshAll(); }
+      else if (typeof showToast === 'function') showToast('Sign in failed', (r.data && r.data.error) || 'Invalid email or password');
+    }).catch(function () { if (typeof showToast === 'function') showToast('Sign in unavailable', 'Could not reach the server — try again'); });
   };
-  var origCreate = window.createAccount;
-  if (typeof origCreate === 'function') {
+  if (typeof window.createAccount === 'function') {
     window.createAccount = function () {
       var name = ((document.getElementById('suName') || {}).value || '').trim();
       var email = ((document.getElementById('suEmail') || {}).value || '').trim();
       var pass = (document.getElementById('suPass') || {}).value || '';
-      if (!email || !pass) {
-        if (typeof showToast === 'function') showToast('Sign up failed', 'Enter an email and password');
-        return;
-      }
+      if (!email || !pass) { if (typeof showToast === 'function') showToast('Sign up failed', 'Enter an email and password'); return; }
       jpost('/auth/signup', { email: email, password: pass, name: name }).then(function (r) {
-        if (r.ok && r.data && r.data.token) {
-          window.CF.token = r.data.token;
-          origCreate();        // account created → enter
-          refreshAll();
-        } else {
-          if (typeof showToast === 'function') showToast('Sign up failed', (r.data && r.data.error) || 'Could not create account');
-        }
-      }).catch(function () {
-        if (typeof showToast === 'function') showToast('Sign up unavailable', 'Could not reach the server — try again');
-      });
+        if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; enterApp(); refreshAll(); }
+        else if (typeof showToast === 'function') showToast('Sign up failed', (r.data && r.data.error) || 'Could not create account');
+      }).catch(function () { if (typeof showToast === 'function') showToast('Sign up unavailable', 'Could not reach the server — try again'); });
     };
   }
 
@@ -6181,16 +6171,20 @@ nav('overview');
   }
 
   /* ---- live updates: re-pull when the backend changes (dashboard / app) ---- */
-  try {
-    var es = new EventSource(API + '/v1/stream?key=' + SDK_KEY);
-    ['block.published', 'block.paused', 'block.updated', 'block.targeted', 'block.created']
-      .forEach(function (t) { es.addEventListener(t, loadBlocks); });
-    ['campaign.publish', 'campaign.pause', 'campaign.created']
-      .forEach(function (t) { es.addEventListener(t, loadCampaigns); });
-  } catch (e) {}
+  var _es = null;
+  function connectSSE() {
+    try { if (_es) _es.close(); } catch (e) {}
+    try {
+      _es = new EventSource(API + '/v1/stream?key=' + SDK_KEY);
+      ['block.published', 'block.paused', 'block.updated', 'block.targeted', 'block.created']
+        .forEach(function (t) { _es.addEventListener(t, loadBlocks); });
+      ['campaign.publish', 'campaign.pause', 'campaign.created']
+        .forEach(function (t) { _es.addEventListener(t, loadCampaigns); });
+    } catch (e) {}
+  }
+  connectSSE();
 
   /* ===== Developers page — make it real (override the prototype's fake panels) ===== */
-  var HOST = API.replace(/^https?:\/\//, '');
 
   // Responsive fixes scoped to the Developers panel (long endpoint paths + tab bar overflow).
   (function injectDevCss() {
@@ -6328,6 +6322,18 @@ nav('overview');
   };
 
   console.log('ContentFlow backend integration active →', API);
+
+  // Resolve the live backend URL from a same-origin pointer, so a tunnel change
+  // only needs a 1-line api.json update (no full site rebuild). ?api= still wins.
+  if (!qp) {
+    fetch('./api.json?t=' + Date.now()).then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.api && j.api !== API) {
+        API = j.api; window.CF.API = API; HOST = hostOf(API);
+        connectSSE();
+        console.log('ContentFlow API repointed via api.json →', API);
+      }
+    }).catch(function () {});
+  }
 })();
 
 </script>
