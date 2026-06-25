@@ -6110,12 +6110,27 @@ nav('overview');
     try { if (typeof renderOverview === 'function') renderOverview(); } catch (e) {}
     try { if (typeof applyViewState === 'function') applyViewState(); } catch (e) {}
   }
+  // admin reads carry the session token so the backend scopes them to the user's workspace
+  function adminHeaders() {
+    var h = { 'X-CF-Key': ADMIN_KEY };
+    if (window.CF && window.CF.token) h['Authorization'] = 'Bearer ' + window.CF.token;
+    return h;
+  }
+  // reflect the signed-in user's name + company in the app shell
+  function applyIdentity() {
+    var u = window.CF && window.CF.user; if (!u) return;
+    var first = (u.name || u.email || '').trim().split(/\s+/)[0] || (u.email || '').split('@')[0];
+    var initials = (u.name || u.email || '?').trim().split(/\s+/).map(function (s) { return s[0] || ''; }).slice(0, 2).join('').toUpperCase();
+    var nEl = document.querySelector('#appShell .sb-uinfo .n'); if (nEl) nEl.textContent = first;
+    var rEl = document.querySelector('#appShell .sb-uinfo .r'); if (rEl) rEl.textContent = u.workspace || 'My workspace';
+    var av = document.querySelector('#appShell .avatar'); if (av) av.textContent = initials || 'U';
+  }
   window.signIn = function () {
     var email = ((document.getElementById('loginEmail') || {}).value || '').trim();
     var pass = (document.getElementById('loginPass') || {}).value || '';
     if (!email || !pass) { cfToast('Missing info', 'Enter your email and password', 'bad'); return; }
     jpost('/auth/login', { email: email, password: pass }).then(function (r) {
-      if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; enterApp(); refreshAll(); }
+      if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; window.CF.user = r.data.user; enterApp(); applyIdentity(); refreshAll(); }
       else if (r.status === 401) cfToast('Wrong email or password', 'Check your credentials and try again', 'bad');
       else if (r.status >= 500 || r.status === 0) cfToast('Server problem', 'A ContentFlow service is down — see status below', 'bad');
       else cfToast('Sign in failed', (r.data && r.data.error) || ('Unexpected response (HTTP ' + r.status + ')'), 'bad');
@@ -6126,9 +6141,10 @@ nav('overview');
       var name = ((document.getElementById('suName') || {}).value || '').trim();
       var email = ((document.getElementById('suEmail') || {}).value || '').trim();
       var pass = (document.getElementById('suPass') || {}).value || '';
+      var ws = ((document.getElementById('suWorkspace') || {}).value || '').trim();
       if (!email || !pass) { cfToast('Missing info', 'Enter an email and password', 'bad'); return; }
-      jpost('/auth/signup', { email: email, password: pass, name: name }).then(function (r) {
-        if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; enterApp(); refreshAll(); }
+      jpost('/auth/signup', { email: email, password: pass, name: name, workspace: ws }).then(function (r) {
+        if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; window.CF.user = r.data.user; enterApp(); applyIdentity(); refreshAll(); }
         else cfToast('Sign up failed', (r.data && r.data.error) || 'Could not create account', 'bad');
       }).catch(function () { cfToast('Cannot reach ContentFlow', 'The platform is unreachable — see status below', 'bad'); });
     };
@@ -6220,7 +6236,7 @@ nav('overview');
 
   /* ---- live data: Campaign Manager ---- */
   function loadCampaigns() {
-    return api('/admin/campaigns', { headers: { 'X-CF-Key': ADMIN_KEY } }).then(function (r) {
+    return api('/admin/campaigns', { headers: adminHeaders() }).then(function (r) {
       if (!r.ok || !r.data || !Array.isArray(r.data.campaigns) || typeof campaigns === 'undefined') return;
       campaigns.length = 0;
       r.data.campaigns.forEach(function (c, i) {
@@ -6240,14 +6256,22 @@ nav('overview');
 
   /* ---- live data: Dynamic Blocks ---- */
   function loadBlocks() {
-    return api('/admin/blocks', { headers: { 'X-CF-Key': ADMIN_KEY } }).then(function (r) {
+    return api('/admin/blocks', { headers: adminHeaders() }).then(function (r) {
       if (!r.ok || !r.data || !Array.isArray(r.data.blocks) || typeof BLOCKS === 'undefined') return;
+      var managed = {};
       r.data.blocks.forEach(function (b) {
+        managed[b.key] = true;
         if (!BLOCKS[b.key]) return;
         BLOCKS[b.key].instances = b.instances.map(function (i) {
           return { title: i.title, seg: i.seg, status: i.status, edited: (i.version ? 'v' + i.version : 'synced'), val: i.val };
         });
       });
+      // Real accounts only see backend-managed blocks (isolation). The demo/AlFalah
+      // workspace keeps the prototype's rich hardcoded sample blocks for the showcase.
+      var isDemo = window.CF && window.CF.user && window.CF.user.workspaceId === 'ws_demo';
+      if (!isDemo) {
+        Object.keys(BLOCKS).forEach(function (k) { if (!managed[k]) BLOCKS[k].instances = []; });
+      }
       if (typeof curSection !== 'undefined' && curSection === 'blocks' && typeof renderCatalog === 'function') renderCatalog();
     }).catch(function () {});
   }
