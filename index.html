@@ -6059,5 +6059,112 @@ renderCatalog();
 updateBadges();
 nav('overview');
 </script>
+<script>
+/* ===== ContentFlow backend integration (appended to the prototype) =====
+   Wires the site's login, Campaign Manager, and Dynamic Blocks to the live
+   API Gateway. Non-destructive: overrides globals, mutates existing data
+   structures, and re-renders with the app's own functions. */
+(function () {
+  var DEFAULT_API = 'https://c0c42f97d771d9.lhr.life';
+  var qp = new URLSearchParams(location.search).get('api');
+  var API = qp || localStorage.getItem('cf_api') || DEFAULT_API;
+  if (qp) localStorage.setItem('cf_api', qp);     // ?api=... overrides without redeploy
+  var ADMIN_KEY = 'sk_live_demo', SDK_KEY = 'pk_live_demo';
+  window.CF = { API: API, token: null };
+
+  function api(path, opts) {
+    return fetch(API + path, opts || {}).then(function (r) {
+      return r.json().catch(function () { return {}; })
+        .then(function (d) { return { ok: r.ok, status: r.status, data: d }; });
+    });
+  }
+  function jpost(path, obj, headers) {
+    return api(path, { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, headers || {}), body: JSON.stringify(obj) });
+  }
+
+  /* ---- real auth (demo-resilient: always enters the app) ---- */
+  var origSignIn = window.signIn;
+  window.signIn = function () {
+    var email = (document.getElementById('loginEmail') || {}).value || '';
+    var pass = (document.getElementById('loginPass') || {}).value || '';
+    jpost('/auth/login', { email: email, password: pass })
+      .then(function (r) {
+        if (r.ok) { window.CF.token = r.data.token; }
+        else if ((email || pass) && typeof showToast === 'function') showToast('Login note', (r.data && r.data.error) || 'Using demo session');
+      })
+      .catch(function () {})
+      .then(function () { origSignIn(); refreshAll(); });
+  };
+  var origCreate = window.createAccount;
+  if (typeof origCreate === 'function') {
+    window.createAccount = function () {
+      var email = (document.getElementById('suEmail') || {}).value || '';
+      var pass = (document.getElementById('suPass') || {}).value || '';
+      jpost('/auth/signup', { email: email, password: pass })
+        .then(function (r) { if (r.ok) window.CF.token = r.data.token; })
+        .catch(function () {})
+        .then(function () { origCreate(); refreshAll(); });
+    };
+  }
+
+  /* ---- live data: Campaign Manager ---- */
+  function loadCampaigns() {
+    return api('/admin/campaigns', { headers: { 'X-CF-Key': ADMIN_KEY } }).then(function (r) {
+      if (!r.ok || !r.data || !Array.isArray(r.data.campaigns) || typeof campaigns === 'undefined') return;
+      campaigns.length = 0;
+      r.data.campaigns.forEach(function (c, i) {
+        var m = c.metrics || {};
+        campaigns.push({
+          name: c.name, type: c.type, seg: c.seg, status: c.status, sched: c.sched,
+          impr: m.impr || 0, ctr: m.ctr || 0, conv: m.conv || 0, delivered: m.delivered || 0,
+          seen: m.seen || 0, tapped: m.tapped || 0, converted: m.converted || 0,
+          owner: ['Mohammed', 'Sara K.', 'Omar F.'][i % 3], tags: [],
+          activity: [{ action: 'Synced from ContentFlow', by: 'API', time: 'just now' }],
+          channels: [({ banner: 'Banner', toast: 'Push', tooltip: 'In-App', panel: 'In-App', whatsapp: 'WhatsApp' })[c.type] || 'Banner']
+        });
+      });
+      if (typeof curSection !== 'undefined' && curSection === 'campaigns' && typeof campShowList === 'function') campShowList();
+    }).catch(function () {});
+  }
+
+  /* ---- live data: Dynamic Blocks ---- */
+  function loadBlocks() {
+    return api('/admin/blocks', { headers: { 'X-CF-Key': ADMIN_KEY } }).then(function (r) {
+      if (!r.ok || !r.data || !Array.isArray(r.data.blocks) || typeof BLOCKS === 'undefined') return;
+      r.data.blocks.forEach(function (b) {
+        if (!BLOCKS[b.key]) return;
+        BLOCKS[b.key].instances = b.instances.map(function (i) {
+          return { title: i.title, seg: i.seg, status: i.status, edited: (i.version ? 'v' + i.version : 'synced'), val: i.val };
+        });
+      });
+      if (typeof curSection !== 'undefined' && curSection === 'blocks' && typeof renderCatalog === 'function') renderCatalog();
+    }).catch(function () {});
+  }
+
+  function refreshAll() { return Promise.all([loadCampaigns(), loadBlocks()]); }
+
+  /* ---- fetch fresh data when entering those sections ---- */
+  if (typeof window.nav === 'function') {
+    var origNav = window.nav;
+    window.nav = function (section) {
+      origNav(section);
+      if (section === 'campaigns') loadCampaigns();
+      if (section === 'blocks') loadBlocks();
+    };
+  }
+
+  /* ---- live updates: re-pull when the backend changes (dashboard / app) ---- */
+  try {
+    var es = new EventSource(API + '/v1/stream?key=' + SDK_KEY);
+    ['block.published', 'block.paused', 'block.updated', 'block.targeted', 'block.created']
+      .forEach(function (t) { es.addEventListener(t, loadBlocks); });
+    ['campaign.publish', 'campaign.pause', 'campaign.created']
+      .forEach(function (t) { es.addEventListener(t, loadCampaigns); });
+  } catch (e) {}
+
+  console.log('ContentFlow backend integration active →', API);
+})();
+
+</script>
 </body>
 </html>
