@@ -6178,7 +6178,9 @@ nav('overview');
       '#devBody .form-card{overflow:hidden}' +
       '#devBody .summ-row .v{word-break:break-all;text-align:right;margin-left:10px}' +
       '#devRoot .ntabs{flex-wrap:wrap;max-width:100%}' +
-      '#devBody{max-width:100%;overflow-x:hidden}';
+      '#devBody{max-width:100%}' +
+      '#devBody .form-grid{max-width:100%}' +
+      '#devBody .form-grid>*{min-width:0}';   // let the 1fr track shrink; code-block scrolls internally
     document.head.appendChild(s);
   })();
   // The endpoints the gateway actually serves, with real sample requests.
