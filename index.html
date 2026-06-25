@@ -6127,6 +6127,13 @@ nav('overview');
     };
   }
 
+  /* ---- prefill the demo credentials on the login page (one-click demo) ---- */
+  (function prefillDemo() {
+    var le = document.getElementById('loginEmail'), lp = document.getElementById('loginPass');
+    if (le && !le.value) le.value = 'demo@contentflow.com';
+    if (lp && !lp.value) lp.value = 'demo123';
+  })();
+
   /* ---- live data: Campaign Manager ---- */
   function loadCampaigns() {
     return api('/admin/campaigns', { headers: { 'X-CF-Key': ADMIN_KEY } }).then(function (r) {
