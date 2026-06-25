@@ -6101,8 +6101,12 @@ nav('overview');
     if (!email || !pass) { if (typeof showToast === 'function') showToast('Sign in failed', 'Enter your email and password'); return; }
     jpost('/auth/login', { email: email, password: pass }).then(function (r) {
       if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; enterApp(); refreshAll(); }
-      else if (typeof showToast === 'function') showToast('Sign in failed', (r.data && r.data.error) || 'Invalid email or password');
-    }).catch(function () { if (typeof showToast === 'function') showToast('Sign in unavailable', 'Could not reach the server — try again'); });
+      else if (typeof showToast === 'function') {
+        if (r.status === 401) showToast('Wrong email or password', 'Check your credentials and try again');
+        else if (r.status >= 500 || r.status === 0) showToast('Server problem', 'The login service looks down — see Backend status on the right');
+        else showToast('Sign in failed', (r.data && r.data.error) || ('Unexpected response (HTTP ' + r.status + ')'));
+      }
+    }).catch(function () { if (typeof showToast === 'function') showToast('Can’t reach the server', 'Backend is unreachable — check Backend status on the right'); });
   };
   if (typeof window.createAccount === 'function') {
     window.createAccount = function () {
@@ -6122,6 +6126,51 @@ nav('overview');
     var le = document.getElementById('loginEmail'), lp = document.getElementById('loginPass');
     if (le && !le.value) le.value = 'demo@contentflow.com';
     if (lp && !lp.value) lp.value = 'demo123';
+  })();
+
+  /* ---- backend status panel on the login page (right side) ---- */
+  (function statusPanel() {
+    var side = document.querySelector('#loginPage .login-side');
+    if (!side || document.getElementById('cfStatus')) return;
+    var SVCS = ['auth', 'blocks', 'campaigns', 'delivery', 'analytics'];
+    var wrap = document.createElement('div');
+    wrap.id = 'cfStatus';
+    wrap.style.cssText = 'margin-top:30px;max-width:430px;border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:14px 16px;background:rgba(255,255,255,0.03)';
+    wrap.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:11px">' +
+        '<span id="cfStatusDot" style="width:9px;height:9px;border-radius:50%;background:#8A90A2;display:inline-block"></span>' +
+        '<span id="cfStatusTitle" style="font-size:13px;font-weight:600;color:#e8e8ef">Checking backend…</span>' +
+        '<span id="cfStatusTime" style="margin-left:auto;font-size:10px;color:#8A90A2;font-family:ui-monospace,monospace"></span>' +
+      '</div>' +
+      '<div id="cfStatusRows" style="display:grid;grid-template-columns:1fr 1fr;gap:7px 18px"></div>';
+    side.appendChild(wrap);
+
+    function dot(c) { return '<span style="width:7px;height:7px;border-radius:50%;background:' + c + ';display:inline-block;margin-right:7px;flex-shrink:0"></span>'; }
+    function stamp() { var d = new Date(); document.getElementById('cfStatusTime').textContent = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2); }
+    function refresh() {
+      fetch(API + '/health').then(function (r) { return r.json(); }).then(function (d) {
+        var svc = d.services || {};
+        var allUp = SVCS.every(function (k) { return svc[k] === 'up'; });
+        var t = document.getElementById('cfStatusTitle');
+        document.getElementById('cfStatusDot').style.background = allUp ? '#2BD389' : '#E5484D';
+        t.textContent = allUp ? 'All systems operational' : 'Some services are DOWN';
+        t.style.color = allUp ? '#2BD389' : '#E5484D';
+        document.getElementById('cfStatusRows').innerHTML = SVCS.map(function (k) {
+          var up = svc[k] === 'up';
+          return '<div style="font-size:12px;color:' + (up ? '#cfd2dc' : '#E5484D') + ';display:flex;align-items:center">' + dot(up ? '#2BD389' : '#E5484D') + k + (up ? '' : ' · down') + '</div>';
+        }).join('');
+        stamp();
+      }).catch(function () {
+        var t = document.getElementById('cfStatusTitle');
+        document.getElementById('cfStatusDot').style.background = '#E5484D';
+        t.textContent = 'Backend unreachable'; t.style.color = '#E5484D';
+        document.getElementById('cfStatusRows').innerHTML = '<div style="font-size:12px;color:#E5484D;grid-column:1/-1;line-height:1.4">Gateway not responding — the services are stopped or the tunnel is down.</div>';
+        stamp();
+      });
+    }
+    window.cfStatusRefresh = refresh;   // re-poll once api.json resolves the live URL
+    refresh();
+    setInterval(refresh, 10000);
   })();
 
   /* ---- live data: Campaign Manager ---- */
@@ -6330,6 +6379,7 @@ nav('overview');
       if (j && j.api && j.api !== API) {
         API = j.api; window.CF.API = API; HOST = hostOf(API);
         connectSSE();
+        if (typeof window.cfStatusRefresh === 'function') window.cfStatusRefresh();
         console.log('ContentFlow API repointed via api.json →', API);
       }
     }).catch(function () {});
