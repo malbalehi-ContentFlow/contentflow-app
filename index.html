@@ -6164,6 +6164,23 @@ nav('overview');
 
   /* ===== Developers page — make it real (override the prototype's fake panels) ===== */
   var HOST = API.replace(/^https?:\/\//, '');
+
+  // Responsive fixes scoped to the Developers panel (long endpoint paths + tab bar overflow).
+  (function injectDevCss() {
+    if (document.getElementById('cf-dev-css')) return;
+    var s = document.createElement('style');
+    s.id = 'cf-dev-css';
+    s.textContent =
+      '#devBody .ep-row{align-items:flex-start}' +
+      '#devBody .ep-p{flex-shrink:1;min-width:0;white-space:normal;word-break:break-all;overflow-wrap:anywhere}' +
+      '#devBody .ep-d{flex-basis:100%;margin-top:2px}' +
+      '#devBody .code-block{max-width:100%;overflow-x:auto}' +
+      '#devBody .form-card{overflow:hidden}' +
+      '#devBody .summ-row .v{word-break:break-all;text-align:right;margin-left:10px}' +
+      '#devRoot .ntabs{flex-wrap:wrap;max-width:100%}' +
+      '#devBody{max-width:100%;overflow-x:hidden}';
+    document.head.appendChild(s);
+  })();
   // The endpoints the gateway actually serves, with real sample requests.
   var REAL_ENDPOINTS = [
     { m: 'POST', p: '/v1/identify', admin: false, body: '{ "deviceId": "sandbox", "consent": true, "traits": { "salary": 9000, "region": "Riyadh" } }', d: 'Ship device traits — segments are matched server-side' },
@@ -6177,12 +6194,14 @@ nav('overview');
   ];
 
   window.cfTestConn = function () {
+    // NOTE: this pings the ContentFlow API gateway's /health — it confirms the
+    // backend is reachable from this browser. It does NOT mean any app has integrated.
     fetch(API + '/health').then(function (r) { return r.json(); })
       .then(function (d) {
         var up = Object.values(d.services || {}).filter(function (s) { return s === 'up'; }).length;
-        if (typeof showToast === 'function') showToast('Connected to backend', up + '/5 services up · ' + HOST);
+        if (typeof showToast === 'function') showToast('ContentFlow API is reachable', up + '/5 services up at ' + HOST + ' — this checks the API, not a connected app');
       })
-      .catch(function () { if (typeof showToast === 'function') showToast('Backend unreachable', HOST); });
+      .catch(function () { if (typeof showToast === 'function') showToast('API unreachable', 'Could not reach ' + HOST); });
   };
   window.cfSelEndpoint = function (sel) {
     var def = REAL_ENDPOINTS[sel.selectedIndex] || {};
@@ -6202,7 +6221,8 @@ nav('overview');
       + '<div class="fc-sub">Working SDK. The native iOS/Android pods are not published yet — on those, call the REST API directly (see Docs).</div>'
       + '<div class="code-block" style="margin-top:14px;position:relative"><button class="code-copy" onclick="copyText(' + JSON.stringify(web).replace(/"/g, '&quot;') + ')">Copy</button>' + esc(web) + '</div>'
       + '<div style="display:flex;gap:9px;margin-top:14px"><a class="fa-draft" style="width:auto;padding:9px 16px;text-decoration:none" href="' + API + '/cf-sdk.js" target="_blank">Download cf-sdk.js</a>'
-      + '<button class="fa-pub" style="width:auto;padding:9px 18px" onclick="cfTestConn()">Test connection</button></div>'
+      + '<button class="fa-pub" style="width:auto;padding:9px 18px" onclick="cfTestConn()">Ping API</button></div>'
+      + '<div class="fc-sub" style="margin-top:10px;font-size:11.5px">“Ping API” checks that the ContentFlow backend is reachable — it does not detect a connected app.</div>'
       + '</div></div><div class="form-side">'
       + '<div class="form-card"><h3>Your keys</h3>'
       + '<div class="summ-row"><span class="k">Base URL</span><span class="v mono">' + esc(HOST) + '</span></div>'
