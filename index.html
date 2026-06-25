@@ -6124,6 +6124,7 @@ nav('overview');
     var nEl = document.querySelector('#appShell .sb-uinfo .n'); if (nEl) nEl.textContent = first;
     var rEl = document.querySelector('#appShell .sb-uinfo .r'); if (rEl) rEl.textContent = u.workspace || 'My workspace';
     var av = document.querySelector('#appShell .avatar'); if (av) av.textContent = initials || 'U';
+    if (typeof window.cfRebrandSoon === 'function') window.cfRebrandSoon();
   }
   window.signIn = function () {
     var email = ((document.getElementById('loginEmail') || {}).value || '').trim();
@@ -6242,6 +6243,7 @@ nav('overview');
       r.data.campaigns.forEach(function (c, i) {
         var m = c.metrics || {};
         campaigns.push({
+          _id: c.id,
           name: c.name, type: c.type, seg: c.seg, status: c.status, sched: c.sched,
           impr: m.impr || 0, ctr: m.ctr || 0, conv: m.conv || 0, delivered: m.delivered || 0,
           seen: m.seen || 0, tapped: m.tapped || 0, converted: m.converted || 0,
@@ -6263,7 +6265,7 @@ nav('overview');
         managed[b.key] = true;
         if (!BLOCKS[b.key]) return;
         BLOCKS[b.key].instances = b.instances.map(function (i) {
-          return { title: i.title, seg: i.seg, status: i.status, edited: (i.version ? 'v' + i.version : 'synced'), val: i.val };
+          return { _id: i.id, _key: b.key, title: i.title, seg: i.seg, status: i.status, edited: (i.version ? 'v' + i.version : 'synced'), val: i.val };
         });
       });
       // Real accounts only see backend-managed blocks (isolation). The demo/AlFalah
@@ -6438,6 +6440,109 @@ nav('overview');
     }, 50);
     return box;
   };
+
+  /* ===== write-through: persist dashboard edits to the workspace ===== */
+  function cfPatch(path, obj) { return api(path, { method: 'PATCH', headers: Object.assign({ 'Content-Type': 'application/json' }, adminHeaders()), body: JSON.stringify(obj) }); }
+  function cfDelete(path) { return api(path, { method: 'DELETE', headers: adminHeaders() }); }
+  function mapCamp(c) { return { name: c.name, type: c.type, seg: c.seg, status: c.status, sched: c.sched }; }
+  function cfCreateCampaign(rec) {
+    if (!rec || rec._id) return;
+    jpost('/admin/campaigns', mapCamp(rec), adminHeaders()).then(function (r) { if (r.ok && r.data && r.data.id) rec._id = r.data.id; });
+  }
+  function cfCreateBlockInstance(key, inst) {
+    if (!inst || inst._id) return;
+    jpost('/admin/blocks/' + key + '/instances', { title: inst.title, seg: inst.seg, status: inst.status, val: inst.val }, adminHeaders())
+      .then(function (r) { if (r.ok && r.data && r.data.id) { inst._id = r.data.id; inst._key = key; } });
+  }
+
+  if (typeof window.campCommit === 'function') {
+    var _campCommit = window.campCommit;
+    window.campCommit = function (intent) {
+      var editIdx = (typeof campEditIdx !== 'undefined') ? campEditIdx : -1;
+      var editObj = (editIdx >= 0 && typeof campaigns !== 'undefined') ? campaigns[editIdx] : null;
+      var beforeLen = (typeof campaigns !== 'undefined') ? campaigns.length : 0;
+      _campCommit(intent);
+      if (typeof campaigns === 'undefined') return;
+      if (editObj && editObj._id) cfPatch('/admin/campaigns/' + editObj._id, mapCamp(editObj));
+      else if (campaigns.length > beforeLen) cfCreateCampaign(campaigns[0]);
+    };
+  }
+  if (typeof window.campLifecycle === 'function') {
+    var _campLifecycle = window.campLifecycle;
+    window.campLifecycle = function (i, action) {
+      var c = (typeof campaigns !== 'undefined') ? campaigns[i] : null, id = c && c._id;
+      if (id) {
+        if (action === 'pause') jpost('/admin/campaigns/' + id + '/pause', {}, adminHeaders());
+        else if (action === 'resume') jpost('/admin/campaigns/' + id + '/publish', {}, adminHeaders());
+        else if (action === 'end') cfPatch('/admin/campaigns/' + id, { status: 'ended' });
+        else if (action === 'delete') cfDelete('/admin/campaigns/' + id);
+      }
+      var beforeLen = (typeof campaigns !== 'undefined') ? campaigns.length : 0;
+      _campLifecycle(i, action);
+      if (action === 'duplicate' && typeof campaigns !== 'undefined' && campaigns.length > beforeLen) {
+        campaigns[0]._id = null;   // a clone inherits the source id — clear it so it's created fresh
+        cfCreateCampaign(campaigns[0]);
+      }
+    };
+  }
+  if (typeof window.publish === 'function') {
+    var _publish = window.publish;
+    window.publish = function () {
+      _publish();
+      var key = (typeof curKey !== 'undefined') ? curKey : null;
+      var blk = (typeof curBlock !== 'undefined') ? curBlock : null;
+      if (!key || !blk || typeof edInstIdx === 'undefined' || edInstIdx < 0) return;
+      var inst = blk.instances[edInstIdx];
+      if (!inst) return;
+      if (inst._id) cfPatch('/admin/blocks/' + key + '/instances/' + inst._id, { title: inst.title, seg: inst.seg, status: inst.status, val: inst.val });
+      else cfCreateBlockInstance(key, inst);
+    };
+  }
+  if (typeof window.instAction === 'function') {
+    var _instAction = window.instAction;
+    window.instAction = function (ii, action) {
+      var blk = (typeof curBlock !== 'undefined') ? curBlock : null;
+      var key = (typeof curKey !== 'undefined') ? curKey : null;
+      var inst = blk ? blk.instances[ii] : null, id = inst && inst._id;
+      if (id && key) {
+        if (action === 'toggle') jpost('/admin/blocks/' + key + '/instances/' + id + '/' + (inst.status === 'live' ? 'pause' : 'publish'), {}, adminHeaders());
+        else if (action === 'delete') cfDelete('/admin/blocks/' + key + '/instances/' + id);
+      }
+      var beforeLen = blk ? blk.instances.length : 0;
+      _instAction(ii, action);
+      if (action === 'duplicate' && blk && blk.instances.length > beforeLen && blk.instances[ii + 1]) {
+        blk.instances[ii + 1]._id = null;   // clone inherits source id — clear so it's created fresh
+        cfCreateBlockInstance(key, blk.instances[ii + 1]);
+      }
+    };
+  }
+
+  /* ===== de-AlFalah: render the signed-in company across the app (demo keeps AlFalah) ===== */
+  var _rebrandTimer = null;
+  function cfRebrand() {
+    var u = window.CF && window.CF.user;
+    if (!u || u.workspaceId === 'ws_demo') return;
+    var brand = u.workspace || 'My workspace';
+    var root = document.getElementById('appShell'); if (!root) return;
+    var rx = /AlFalah Bank|AlFalah|دي ٣٦٠/g;
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null), nodes = [], n;
+    while ((n = walker.nextNode())) nodes.push(n);
+    nodes.forEach(function (t) {
+      var p = t.parentNode; if (!p) return;
+      var nm = p.nodeName; if (nm === 'SCRIPT' || nm === 'STYLE') return;
+      rx.lastIndex = 0;
+      if (rx.test(t.nodeValue)) { rx.lastIndex = 0; t.nodeValue = t.nodeValue.replace(rx, brand); }
+    });
+  }
+  function cfRebrandSoon() { clearTimeout(_rebrandTimer); _rebrandTimer = setTimeout(cfRebrand, 60); }
+  window.cfRebrandSoon = cfRebrandSoon;
+  (function () {
+    var root = document.getElementById('appShell');
+    if (!root || !window.MutationObserver) return;
+    new MutationObserver(function () {
+      if (window.CF && window.CF.user && window.CF.user.workspaceId !== 'ws_demo') cfRebrandSoon();
+    }).observe(root, { childList: true, subtree: true, characterData: true });
+  })();
 
   console.log('ContentFlow backend integration active →', API);
 
