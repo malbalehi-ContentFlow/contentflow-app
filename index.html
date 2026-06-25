@@ -6065,7 +6065,7 @@ nav('overview');
    API Gateway. Non-destructive: overrides globals, mutates existing data
    structures, and re-renders with the app's own functions. */
 (function () {
-  var DEFAULT_API = 'https://c0c42f97d771d9.lhr.life';
+  var DEFAULT_API = 'https://b90c1121716e9a.lhr.life';
   var qp = new URLSearchParams(location.search).get('api');
   var API = qp || localStorage.getItem('cf_api') || DEFAULT_API;
   if (qp) localStorage.setItem('cf_api', qp);     // ?api=... overrides without redeploy
