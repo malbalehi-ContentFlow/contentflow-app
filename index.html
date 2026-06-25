@@ -6162,6 +6162,122 @@ nav('overview');
       .forEach(function (t) { es.addEventListener(t, loadCampaigns); });
   } catch (e) {}
 
+  /* ===== Developers page — make it real (override the prototype's fake panels) ===== */
+  var HOST = API.replace(/^https?:\/\//, '');
+  // The endpoints the gateway actually serves, with real sample requests.
+  var REAL_ENDPOINTS = [
+    { m: 'POST', p: '/v1/identify', admin: false, body: '{ "deviceId": "sandbox", "consent": true, "traits": { "salary": 9000, "region": "Riyadh" } }', d: 'Ship device traits — segments are matched server-side' },
+    { m: 'GET',  p: '/v1/sync', admin: false, d: 'All visible, resolved blocks for the device (ETag / 304)' },
+    { m: 'GET',  p: '/v1/blocks/discovery_card', admin: false, d: 'One resolved block (If-None-Match → 304)' },
+    { m: 'GET',  p: '/api/v1/content/deliver?placementId=home_offers', admin: false, d: 'Placement-based delivery (cards for a screen slot)' },
+    { m: 'POST', p: '/v1/events', admin: false, body: '{ "consent": true, "events": [ { "type": "impression", "instanceId": "discovery_card_1" } ] }', d: 'Batched SDK events (consent-gated, PDPL)' },
+    { m: 'GET',  p: '/admin/blocks', admin: true, d: 'List blocks + instances (admin key)' },
+    { m: 'GET',  p: '/admin/campaigns', admin: true, d: 'List campaigns (admin key)' },
+    { m: 'POST', p: '/admin/blocks/discovery_card/instances/discovery_card_1/publish', admin: true, body: '', d: 'Publish a block instance → emits block.published' }
+  ];
+
+  window.cfTestConn = function () {
+    fetch(API + '/health').then(function (r) { return r.json(); })
+      .then(function (d) {
+        var up = Object.values(d.services || {}).filter(function (s) { return s === 'up'; }).length;
+        if (typeof showToast === 'function') showToast('Connected to backend', up + '/5 services up · ' + HOST);
+      })
+      .catch(function () { if (typeof showToast === 'function') showToast('Backend unreachable', HOST); });
+  };
+  window.cfSelEndpoint = function (sel) {
+    var def = REAL_ENDPOINTS[sel.selectedIndex] || {};
+    var bodyEl = document.getElementById('sbBody');
+    if (bodyEl) { bodyEl.value = def.body || ''; bodyEl.disabled = (def.m === 'GET'); }
+  };
+
+  window.devQuickstart = function () {
+    var web = "import ContentFlow from './cf-sdk.js';\n\n"
+      + "const cf = new ContentFlow({\n  base: '" + API + "',\n  apiKey: 'pk_live_demo',\n  device: 'user-123',\n});\n"
+      + "await cf.identify({ salary: 9000, region: 'Riyadh' });\n"
+      + "cf.onBlock((key, block) => render(key, block));\n"
+      + "for (const b of await cf.sync()) render(b.key, b);\n"
+      + "cf.subscribe();   // live updates via SSE";
+    return '<div class="form-grid"><div>'
+      + '<div class="form-card"><h3>Quickstart — Web / React Native</h3>'
+      + '<div class="fc-sub">Working SDK. The native iOS/Android pods are not published yet — on those, call the REST API directly (see Docs).</div>'
+      + '<div class="code-block" style="margin-top:14px;position:relative"><button class="code-copy" onclick="copyText(' + JSON.stringify(web).replace(/"/g, '&quot;') + ')">Copy</button>' + esc(web) + '</div>'
+      + '<div style="display:flex;gap:9px;margin-top:14px"><a class="fa-draft" style="width:auto;padding:9px 16px;text-decoration:none" href="' + API + '/cf-sdk.js" target="_blank">Download cf-sdk.js</a>'
+      + '<button class="fa-pub" style="width:auto;padding:9px 18px" onclick="cfTestConn()">Test connection</button></div>'
+      + '</div></div><div class="form-side">'
+      + '<div class="form-card"><h3>Your keys</h3>'
+      + '<div class="summ-row"><span class="k">Base URL</span><span class="v mono">' + esc(HOST) + '</span></div>'
+      + '<div class="summ-row"><span class="k">SDK key</span><span class="v mono">pk_live_demo</span></div>'
+      + '<div class="summ-row"><span class="k">Admin key</span><span class="v mono">sk_live_demo</span></div>'
+      + '<div class="summ-row"><span class="k">Region</span><span class="v">ksa</span></div></div>'
+      + '<div class="form-card" style="margin-top:14px"><h3>Native iOS / Android</h3><div class="fc-sub">SDK not yet published. Use the REST endpoints in the Docs tab with the SDK key as a bearer/X-CF-Key header.</div></div>'
+      + '</div></div>';
+  };
+
+  window.devDocs = function () {
+    return '<p class="fc-sub" style="margin-bottom:16px">REST API · base URL <span class="mono">' + esc(API) + '</span> · pass your key as <span class="mono">X-CF-Key</span> (SDK: <span class="mono">pk_live_demo</span>, admin: <span class="mono">sk_live_demo</span>).</p>'
+      + '<div class="panel-card"><div class="pc-head">Endpoints (live)</div>'
+      + REAL_ENDPOINTS.map(function (e) {
+          return '<div class="ep-row"><span class="ep-m ' + e.m.toLowerCase() + '">' + e.m + '</span>'
+            + '<span class="ep-p mono">' + e.p + '</span><span class="ep-d">' + e.d + (e.admin ? ' · admin key' : '') + '</span></div>';
+        }).join('')
+      + '</div><div style="height:30px"></div>';
+  };
+
+  window.devSandbox = function () {
+    return '<p class="fc-sub" style="margin-bottom:16px">Fire a <b>real</b> request against your live backend at <span class="mono">' + esc(HOST) + '</span>.</p>'
+      + '<div class="form-grid"><div><div class="form-card"><h3>Try a request</h3>'
+      + '<div class="fld-row"><label class="fl">Endpoint</label><select class="f" id="sbEp" onchange="cfSelEndpoint(this)">'
+      + REAL_ENDPOINTS.map(function (e) { return '<option>' + e.m + ' ' + e.p + '</option>'; }).join('')
+      + '</select></div>'
+      + '<div class="fld-row"><label class="fl">Body (JSON)</label><textarea class="f" id="sbBody" rows="4">' + esc(REAL_ENDPOINTS[0].body || '') + '</textarea></div>'
+      + '<button class="fa-pub" style="width:auto;padding:9px 18px" onclick="devRun()">Send request</button>'
+      + '</div></div><div class="form-side"><div class="form-card"><h3>Response</h3>'
+      + '<div class="code-block" id="sbResp" style="min-height:140px">// real response appears here</div></div></div></div>';
+  };
+
+  window.devRun = function () {
+    var sel = document.getElementById('sbEp');
+    var def = REAL_ENDPOINTS[sel ? sel.selectedIndex : 0] || REAL_ENDPOINTS[0];
+    var opts = { method: def.m, headers: { 'X-CF-Key': def.admin ? 'sk_live_demo' : 'pk_live_demo', 'X-CF-Device': 'sandbox' } };
+    if (def.m !== 'GET') {
+      opts.headers['Content-Type'] = 'application/json';
+      var b = document.getElementById('sbBody');
+      opts.body = (b && b.value) || def.body || '{}';
+    }
+    var respEl = document.getElementById('sbResp');
+    respEl.textContent = '… sending';
+    var t0 = (window.performance && performance.now()) || Date.now();
+    fetch(API + def.p, opts).then(function (r) {
+      return r.text().then(function (txt) {
+        var ms = Math.round(((window.performance && performance.now()) || Date.now()) - t0);
+        var pretty; try { pretty = JSON.stringify(JSON.parse(txt), null, 2); } catch (e) { pretty = txt || '(no body)'; }
+        respEl.textContent = r.status + ' ' + r.statusText + ' · ' + ms + 'ms\n' + pretty;
+      });
+    }).catch(function (e) { respEl.textContent = 'Network error: ' + e.message + '\n(backend offline, or base URL stale)'; });
+  };
+
+  window.devStatus = function () {
+    var box = '<div class="status-banner up" id="cfStatusBanner">● Checking services…</div>'
+      + '<div class="panel-card" style="margin-top:16px"><div class="pc-head">Services</div><div id="cfStatusList">…</div></div><div style="height:30px"></div>';
+    setTimeout(function () {
+      fetch(API + '/health').then(function (r) { return r.json(); }).then(function (d) {
+        var svc = d.services || {};
+        var allUp = Object.values(svc).every(function (s) { return s === 'up'; });
+        var ban = document.getElementById('cfStatusBanner');
+        if (ban) { ban.className = 'status-banner ' + (allUp ? 'up' : 'deg'); ban.textContent = allUp ? '● All systems operational' : '● Some systems degraded'; }
+        var list = document.getElementById('cfStatusList');
+        if (list) list.innerHTML = Object.keys(svc).map(function (k) {
+          var up = svc[k] === 'up';
+          return '<div class="status-row"><span class="status-dot ' + (up ? 'up' : 'deg') + '"></span><span class="status-name">' + k + '</span><span class="status-state ' + (up ? 'operational' : 'degraded') + '">' + svc[k] + '</span></div>';
+        }).join('');
+      }).catch(function () {
+        var ban = document.getElementById('cfStatusBanner');
+        if (ban) { ban.className = 'status-banner deg'; ban.textContent = '● Backend unreachable'; }
+      });
+    }, 50);
+    return box;
+  };
+
   console.log('ContentFlow backend integration active →', API);
 })();
 
