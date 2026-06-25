@@ -6082,28 +6082,48 @@ nav('overview');
     return api(path, { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, headers || {}), body: JSON.stringify(obj) });
   }
 
-  /* ---- real auth (demo-resilient: always enters the app) ---- */
+  /* ---- real auth: invalid credentials are rejected, only a verified login enters ---- */
   var origSignIn = window.signIn;
   window.signIn = function () {
-    var email = (document.getElementById('loginEmail') || {}).value || '';
+    var email = ((document.getElementById('loginEmail') || {}).value || '').trim();
     var pass = (document.getElementById('loginPass') || {}).value || '';
-    jpost('/auth/login', { email: email, password: pass })
-      .then(function (r) {
-        if (r.ok) { window.CF.token = r.data.token; }
-        else if ((email || pass) && typeof showToast === 'function') showToast('Login note', (r.data && r.data.error) || 'Using demo session');
-      })
-      .catch(function () {})
-      .then(function () { origSignIn(); refreshAll(); });
+    if (!email || !pass) {
+      if (typeof showToast === 'function') showToast('Sign in failed', 'Enter your email and password');
+      return;
+    }
+    jpost('/auth/login', { email: email, password: pass }).then(function (r) {
+      if (r.ok && r.data && r.data.token) {
+        window.CF.token = r.data.token;
+        origSignIn();          // only a verified login enters the app
+        refreshAll();
+      } else {
+        if (typeof showToast === 'function') showToast('Sign in failed', (r.data && r.data.error) || 'Invalid email or password');
+      }
+    }).catch(function () {
+      if (typeof showToast === 'function') showToast('Sign in unavailable', 'Could not reach the server — try again');
+    });
   };
   var origCreate = window.createAccount;
   if (typeof origCreate === 'function') {
     window.createAccount = function () {
-      var email = (document.getElementById('suEmail') || {}).value || '';
+      var name = ((document.getElementById('suName') || {}).value || '').trim();
+      var email = ((document.getElementById('suEmail') || {}).value || '').trim();
       var pass = (document.getElementById('suPass') || {}).value || '';
-      jpost('/auth/signup', { email: email, password: pass })
-        .then(function (r) { if (r.ok) window.CF.token = r.data.token; })
-        .catch(function () {})
-        .then(function () { origCreate(); refreshAll(); });
+      if (!email || !pass) {
+        if (typeof showToast === 'function') showToast('Sign up failed', 'Enter an email and password');
+        return;
+      }
+      jpost('/auth/signup', { email: email, password: pass, name: name }).then(function (r) {
+        if (r.ok && r.data && r.data.token) {
+          window.CF.token = r.data.token;
+          origCreate();        // account created → enter
+          refreshAll();
+        } else {
+          if (typeof showToast === 'function') showToast('Sign up failed', (r.data && r.data.error) || 'Could not create account');
+        }
+      }).catch(function () {
+        if (typeof showToast === 'function') showToast('Sign up unavailable', 'Could not reach the server — try again');
+      });
     };
   }
 
