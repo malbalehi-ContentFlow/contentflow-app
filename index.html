@@ -6270,7 +6270,7 @@ nav('overview');
         var m = c.metrics || {};
         campaigns.push({
           _id: c.id,
-          name: c.name, type: c.type, seg: c.seg, status: c.status, sched: c.sched,
+          name: c.name, type: c.type || 'banner', seg: c.seg, status: c.status, sched: c.sched,
           impr: m.impr || 0, ctr: m.ctr || 0, conv: m.conv || 0, delivered: m.delivered || 0,
           seen: m.seen || 0, tapped: m.tapped || 0, converted: m.converted || 0,
           owner: ['Mohammed', 'Sara K.', 'Omar F.'][i % 3], tags: [],
@@ -6299,6 +6299,8 @@ nav('overview');
       r.data.blocks.forEach(function (b) {
         managed[b.key] = true;
         if (!BLOCKS[b.key]) return;
+        BLOCKS[b.key].inCampaigns = true;   // your blocks are usable as campaign channels
+        if (typeof TYPE_BY_CHAN !== 'undefined') TYPE_BY_CHAN[BLOCKS[b.key].name] = 'banner';   // valid campaign type (avoids undefined-type crash)
         BLOCKS[b.key].instances = b.instances.map(function (i) {
           return { _id: i.id, _key: b.key, title: i.title, seg: i.seg, status: i.status, edited: (i.version ? 'v' + i.version : 'synced'), val: i.val };
         });
@@ -6515,7 +6517,7 @@ nav('overview');
   /* ===== write-through: persist dashboard edits to the workspace ===== */
   function cfPatch(path, obj) { return api(path, { method: 'PATCH', headers: Object.assign({ 'Content-Type': 'application/json' }, adminHeaders()), body: JSON.stringify(obj) }); }
   function cfDelete(path) { return api(path, { method: 'DELETE', headers: adminHeaders() }); }
-  function mapCamp(c) { return { name: c.name, type: c.type, seg: c.seg, status: c.status, sched: c.sched }; }
+  function mapCamp(c) { return { name: c.name, type: c.type || 'banner', seg: c.seg, status: c.status, sched: c.sched }; }
   function cfCreateCampaign(rec) {
     if (!rec || rec._id) return;
     jpost('/admin/campaigns', mapCamp(rec), adminHeaders()).then(function (r) { if (r.ok && r.data && r.data.id) rec._id = r.data.id; });
@@ -6550,14 +6552,59 @@ nav('overview');
 
   if (typeof window.campCommit === 'function') {
     var _campCommit = window.campCommit;
+    // A campaign that targets a Dynamic Block channel (e.g. "Discovery Card") should
+    // create/update a REAL block instance so it actually delivers via the SDK and the
+    // content stays consistent with the Dynamic Blocks page (its real fields).
+    function channelToBlockKey(chan) {
+      if (typeof BLOCKS === 'undefined') return null;
+      var keys = Object.keys(BLOCKS);
+      for (var i = 0; i < keys.length; i++) if (BLOCKS[keys[i]] && BLOCKS[keys[i]].name === chan) return keys[i];
+      return null;
+    }
+    function campToBlockVal(camp, chan, key) {
+      var cc = (camp.channelContent && camp.channelContent[chan]) || {};
+      var en = cc.en || (camp.content && camp.content.en) || {};
+      var media = cc.media || camp.media || '';
+      var val = {};
+      ((BLOCKS[key] && BLOCKS[key].fields) || []).forEach(function (f) {
+        var id = f.id;
+        if (f.type === 'image' || /image|img|hero|header/i.test(id)) val[id] = media;
+        else if (/title|headline|label/i.test(id) && !/cta/i.test(id)) val[id] = en.title || camp.name || '';
+        else if (/desc|body|subtext|message|msg/i.test(id)) val[id] = en.msg || '';
+        else if (id === 'cta' || /cta/i.test(id)) val[id] = en.cta || '';
+        else if (f.type === 'toggle') val[id] = true;
+      });
+      val.on = true;
+      return val;
+    }
+    function publishCampaignBlocks(camp) {
+      if (!camp || typeof BLOCKS === 'undefined' || !camp.channels) return;
+      camp.channels.forEach(function (chan) {
+        var key = channelToBlockKey(chan); if (!key) return;   // standard channel, not a block
+        var def = BLOCKS[key] || {};
+        var val = campToBlockVal(camp, chan, key);
+        var existing = ((def.instances) || []).filter(function (i) { return i._id && i.title === camp.name; })[0];
+        hostImages(val).then(function () {
+          if (existing && existing._id) cfPatch('/admin/blocks/' + key + '/instances/' + existing._id, { title: camp.name, seg: camp.seg, status: camp.status, val: val });
+          else jpost('/admin/blocks/' + key + '/instances', {
+            title: camp.name, seg: camp.seg, status: camp.status, val: val, priority: camp.priority || 5,
+            blockName: def.name || key, screen: def.screen || '',
+            fields: (def.fields || []).map(function (f) { return { id: f.id, tag: f.v || f.tag || ('#' + f.id), type: f.type }; }),
+            blank: def.blank || {}
+          }, adminHeaders());
+        });
+      });
+    }
     window.campCommit = function (intent) {
       var editIdx = (typeof campEditIdx !== 'undefined') ? campEditIdx : -1;
       var editObj = (editIdx >= 0 && typeof campaigns !== 'undefined') ? campaigns[editIdx] : null;
       var beforeLen = (typeof campaigns !== 'undefined') ? campaigns.length : 0;
       _campCommit(intent);
       if (typeof campaigns === 'undefined') return;
-      if (editObj && editObj._id) cfPatch('/admin/campaigns/' + editObj._id, mapCamp(editObj));
-      else if (campaigns.length > beforeLen) cfCreateCampaign(campaigns[0]);
+      var camp = null;
+      if (editObj && editObj._id) { cfPatch('/admin/campaigns/' + editObj._id, mapCamp(editObj)); camp = editObj; }
+      else if (campaigns.length > beforeLen) { cfCreateCampaign(campaigns[0]); camp = campaigns[0]; }
+      if (camp) publishCampaignBlocks(camp);
     };
   }
   if (typeof window.campLifecycle === 'function') {
@@ -6711,6 +6758,17 @@ nav('overview');
       var ss = document.getElementById('segSelect'); if (!ss) return;
       if (idx != null && idx >= 0 && typeof curBlock !== 'undefined' && curBlock && curBlock.instances[idx]) ss.value = curBlock.instances[idx].seg || 'All users';
       else ss.value = 'All users';
+    };
+  }
+
+  /* ---- default campaign segment = "All users" (new campaigns) ---- */
+  if (typeof window.campShowCreate === 'function') {
+    var _campShowCreate = window.campShowCreate;
+    window.campShowCreate = function (edit) {
+      _campShowCreate(edit);
+      if (typeof campEditIdx === 'undefined' || campEditIdx < 0) {
+        var ss = document.getElementById('ccSeg'); if (ss && !(edit && edit.seg)) ss.value = 'All users';
+      }
     };
   }
 
