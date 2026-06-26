@@ -6284,6 +6284,15 @@ nav('overview');
 
   /* ---- live data: Dynamic Blocks ---- */
   function loadBlocks() {
+    // Drop the prototype's embedded demo instances (no backend _id) BEFORE fetching, so
+    // a real account never flashes the AlFalah samples while the real data loads.
+    var isDemoNow = window.CF && window.CF.user && window.CF.user.workspaceId === 'ws_demo';
+    if (!isDemoNow && typeof BLOCKS !== 'undefined') {
+      Object.keys(BLOCKS).forEach(function (k) {
+        var ins = BLOCKS[k].instances || [];
+        if (ins.some(function (i) { return !i._id; })) BLOCKS[k].instances = [];
+      });
+    }
     return api('/admin/blocks', { headers: adminHeaders() }).then(function (r) {
       if (!r.ok || !r.data || !Array.isArray(r.data.blocks) || typeof BLOCKS === 'undefined') return;
       var managed = {};
@@ -6300,7 +6309,12 @@ nav('overview');
       if (!isDemo) {
         Object.keys(BLOCKS).forEach(function (k) { if (!managed[k]) BLOCKS[k].instances = []; });
       }
-      if (typeof curSection !== 'undefined' && curSection === 'blocks' && typeof renderCatalog === 'function') renderCatalog();
+      if (typeof curSection !== 'undefined' && curSection === 'blocks') {
+        var instEl = document.getElementById('instances');
+        var detailOpen = instEl && instEl.classList.contains('show');
+        if (detailOpen && typeof curKey !== 'undefined' && curKey && typeof openInstances === 'function') openInstances(curKey);  // re-render the open block in place (don't kick back to the list)
+        else if (typeof renderCatalog === 'function') renderCatalog();
+      }
     }).catch(function () {});
   }
 
@@ -6323,7 +6337,7 @@ nav('overview');
       if (!r.ok || !r.data || !Array.isArray(r.data.assets) || typeof ASSETS === 'undefined') return;
       ASSETS.length = 0;
       r.data.assets.forEach(function (a) {
-        ASSETS.push({ n: a.name, t: 'image', g: 'url(' + a.url + ')', url: a.url,
+        ASSETS.push({ id: a.id, n: a.name, t: 'image', g: 'url(' + a.url + ')', url: a.url,
           m: ((a.kind || 'image').split('/')[1] || 'img').toUpperCase() + ' · ' + Math.round((a.size || 0) / 1024) + ' KB' });
       });
       if (typeof curSection !== 'undefined' && curSection === 'content' && typeof renderContent === 'function') renderContent();
@@ -6688,6 +6702,56 @@ nav('overview');
       .then(function (d) { if (d && d.user) { window.CF.user = d.user; saveSession(); applyIdentity(); } })
       .catch(function () {});            // offline: keep the cached session
   })();
+
+  /* ---- default Publish target = "All users" (was "Salary > 3,000 SAR") ---- */
+  if (typeof window.openEditor === 'function') {
+    var _openEditor = window.openEditor;
+    window.openEditor = function (values, seg, idx) {
+      _openEditor(values, seg, idx);
+      var ss = document.getElementById('segSelect'); if (!ss) return;
+      if (idx != null && idx >= 0 && typeof curBlock !== 'undefined' && curBlock && curBlock.instances[idx]) ss.value = curBlock.instances[idx].seg || 'All users';
+      else ss.value = 'All users';
+    };
+  }
+
+  /* ---- favicon = ContentFlow logo ---- */
+  (function setFavicon() {
+    var mark = document.querySelector('.sb-logo img.mark, img.mark');
+    var href = mark && mark.getAttribute('src'); if (!href) return;
+    var link = document.querySelector('link[rel="icon"]');
+    if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+    link.href = href;
+  })();
+
+  /* ---- Content Library asset modal: real "Copy URL" + working Delete (was raw JS) ---- */
+  function cfAssetUrl(a) { return a.url || String(a.g || '').replace(/^url\((['"]?)([\s\S]*?)\1\)$/, '$2'); }
+  if (typeof window.assetPreview === 'function') {
+    window.assetPreview = function (i) {
+      var a = (typeof ASSETS !== 'undefined') ? ASSETS[i] : null; if (!a || typeof openModal !== 'function') return;
+      openModal('<div class="modal-asset" style="background:' + a.g + ';background-size:cover;background-position:center"></div>'
+        + '<div class="modal-body"><div class="modal-title">' + esc(a.n) + '</div>'
+        + '<div class="modal-meta">' + esc(a.t) + ' · ' + esc(a.m) + '</div>'
+        + '<div class="code-block" style="margin-top:12px;font-size:11px;word-break:break-all">' + esc(cfAssetUrl(a)) + '</div>'
+        + '<div style="margin-top:16px;display:flex;gap:9px;flex-wrap:wrap">'
+        + '<button class="fa-pub" style="width:auto;padding:9px 16px" onclick="cfCopyAsset(' + i + ')">Copy image URL</button>'
+        + '<button class="fa-draft" style="width:auto;padding:9px 16px" onclick="closeModal()">Close</button>'
+        + '<button class="fa-cancel" style="color:#E5746C;margin-left:auto" onclick="cfDeleteAsset(' + i + ')">Delete</button>'
+        + '</div></div>');
+    };
+    window.cfCopyAsset = function (i) {
+      var a = ASSETS[i]; if (!a) return;
+      try { navigator.clipboard && navigator.clipboard.writeText(cfAssetUrl(a)); } catch (e) {}
+      if (typeof showToast === 'function') showToast('Image URL copied', 'paste it into a block image field');
+    };
+    window.cfDeleteAsset = function (i) {
+      var a = ASSETS[i]; if (!a) return;
+      if (a.id) cfDelete('/admin/assets/' + a.id);
+      ASSETS.splice(i, 1);
+      if (typeof closeModal === 'function') closeModal();
+      if (typeof renderContent === 'function') renderContent();
+      if (typeof showToast === 'function') showToast('Asset deleted', a.n);
+    };
+  }
 
   console.log('ContentFlow backend integration active →', API);
 
