@@ -6066,6 +6066,9 @@ nav('overview');
    structures, and re-renders with the app's own functions. */
 (function () {
   if (window.__cfInit) return; window.__cfInit = true;   // run once, never multi-wrap
+  // Publish straight to Live (no approval queue) — single-owner workspaces. The SDK
+  // only delivers 'live' content, so an approval step would silently hide new blocks.
+  try { if (typeof approvalWorkflow !== 'undefined') approvalWorkflow = false; } catch (e) {}
   var DEFAULT_API = 'https://api.contentflow.click';
   var qp = new URLSearchParams(location.search).get('api');
   function hostOf(u) { return String(u).replace(/^https?:\/\//, ''); }
