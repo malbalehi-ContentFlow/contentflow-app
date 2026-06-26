@@ -6467,7 +6467,15 @@ nav('overview');
   }
   function cfCreateBlockInstance(key, inst) {
     if (!inst || inst._id) return;
-    jpost('/admin/blocks/' + key + '/instances', { title: inst.title, seg: inst.seg, status: inst.status, val: inst.val }, adminHeaders())
+    var body = { title: inst.title, seg: inst.seg, status: inst.status, val: inst.val };
+    var def = (typeof BLOCKS !== 'undefined' && BLOCKS[key]) ? BLOCKS[key] : null;
+    if (def) {   // let the backend auto-register this block type with real metadata
+      body.blockName = def.name || key;
+      body.screen = def.screen || '';
+      body.blank = def.blank || {};
+      body.fields = (def.fields || []).map(function (f) { return { id: f.id, tag: f.v || f.tag || ('#' + f.id), type: f.type }; });
+    }
+    jpost('/admin/blocks/' + key + '/instances', body, adminHeaders())
       .then(function (r) { if (r.ok && r.data && r.data.id) { inst._id = r.data.id; inst._key = key; } });
   }
 
