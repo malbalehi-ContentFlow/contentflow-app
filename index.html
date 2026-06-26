@@ -6368,9 +6368,11 @@ nav('overview');
     if (bodyEl) { bodyEl.value = def.body || ''; bodyEl.disabled = (def.m === 'GET'); }
   };
 
+  function sdkKey() { return (window.CF && window.CF.user && window.CF.user.sdkKey) || 'pk_live_demo'; }
+
   window.devQuickstart = function () {
     var web = "import ContentFlow from './cf-sdk.js';\n\n"
-      + "const cf = new ContentFlow({\n  base: '" + API + "',\n  apiKey: 'pk_live_demo',\n  device: 'user-123',\n});\n"
+      + "const cf = new ContentFlow({\n  base: '" + API + "',\n  apiKey: '" + sdkKey() + "',\n  device: 'user-123',\n});\n"
       + "await cf.identify({ salary: 9000, region: 'Riyadh' });\n"
       + "cf.onBlock((key, block) => render(key, block));\n"
       + "for (const b of await cf.sync()) render(b.key, b);\n"
@@ -6385,7 +6387,7 @@ nav('overview');
       + '</div></div><div class="form-side">'
       + '<div class="form-card"><h3>Your keys</h3>'
       + '<div class="summ-row"><span class="k">Base URL</span><span class="v mono">' + esc(HOST) + '</span></div>'
-      + '<div class="summ-row"><span class="k">SDK key</span><span class="v mono">pk_live_demo</span></div>'
+      + '<div class="summ-row"><span class="k">SDK key</span><span class="v mono">' + esc(sdkKey()) + '</span></div>'
       + '<div class="summ-row"><span class="k">Admin key</span><span class="v mono">sk_live_demo</span></div>'
       + '<div class="summ-row"><span class="k">Region</span><span class="v">ksa</span></div></div>'
       + '<div class="form-card" style="margin-top:14px"><h3>Native iOS / Android</h3><div class="fc-sub">SDK not yet published. Use the REST endpoints in the Docs tab with the SDK key as a bearer/X-CF-Key header.</div></div>'
@@ -6393,7 +6395,7 @@ nav('overview');
   };
 
   window.devDocs = function () {
-    return '<p class="fc-sub" style="margin-bottom:16px">REST API · base URL <span class="mono">' + esc(API) + '</span> · pass your key as <span class="mono">X-CF-Key</span> (SDK: <span class="mono">pk_live_demo</span>, admin: <span class="mono">sk_live_demo</span>).</p>'
+    return '<p class="fc-sub" style="margin-bottom:16px">REST API · base URL <span class="mono">' + esc(API) + '</span> · pass your key as <span class="mono">X-CF-Key</span> (SDK: <span class="mono">' + esc(sdkKey()) + '</span>, admin: <span class="mono">sk_live_demo</span>).</p>'
       + '<div class="panel-card"><div class="pc-head">Endpoints (live)</div>'
       + REAL_ENDPOINTS.map(function (e) {
           return '<div class="ep-row"><span class="ep-m ' + e.m.toLowerCase() + '">' + e.m + '</span>'
@@ -6417,7 +6419,7 @@ nav('overview');
   window.devRun = function () {
     var sel = document.getElementById('sbEp');
     var def = REAL_ENDPOINTS[sel ? sel.selectedIndex : 0] || REAL_ENDPOINTS[0];
-    var opts = { method: def.m, headers: { 'X-CF-Key': def.admin ? 'sk_live_demo' : 'pk_live_demo', 'X-CF-Device': 'sandbox' } };
+    var opts = { method: def.m, headers: { 'X-CF-Key': def.admin ? 'sk_live_demo' : sdkKey(), 'X-CF-Device': 'sandbox' } };
     if (def.m !== 'GET') {
       opts.headers['Content-Type'] = 'application/json';
       var b = document.getElementById('sbBody');
