@@ -6124,14 +6124,30 @@ nav('overview');
     var nEl = document.querySelector('#appShell .sb-uinfo .n'); if (nEl) nEl.textContent = first;
     var rEl = document.querySelector('#appShell .sb-uinfo .r'); if (rEl) rEl.textContent = u.workspace || 'My workspace';
     var av = document.querySelector('#appShell .avatar'); if (av) av.textContent = initials || 'U';
+    // the "VIEW AS" role-preview switcher is an internal tool — demo workspace only
+    var pill = document.getElementById('viewAsPill');
+    if (pill) pill.style.display = (u.workspaceId === 'ws_demo') ? '' : 'none';
     if (typeof window.cfRebrandSoon === 'function') window.cfRebrandSoon();
   }
+  // Decide the view mode after data loads: demo keeps its current mode + switcher;
+  // a normal user with an empty workspace gets the guided new-user flow (integrate
+  // first, no fake data); once they have content, the normal view.
+  function cfApplyViewMode() {
+    var u = window.CF && window.CF.user; if (!u) return;
+    if (u.workspaceId === 'ws_demo') return;     // demo: leave as-is (switcher available)
+    var hasCampaigns = (typeof campaigns !== 'undefined') && campaigns.length > 0;
+    var hasBlocks = (typeof BLOCKS !== 'undefined') && Object.values(BLOCKS).some(function (b) { return b.instances && b.instances.length; });
+    if (typeof viewAs !== 'undefined') viewAs = (hasCampaigns || hasBlocks) ? 'admin' : 'new';
+    try { if (typeof applyViewState === 'function') applyViewState(); } catch (e) {}
+    if (typeof nav === 'function' && typeof curSection !== 'undefined') nav(curSection);
+  }
+  window.cfApplyViewMode = cfApplyViewMode;
   window.signIn = function () {
     var email = ((document.getElementById('loginEmail') || {}).value || '').trim();
     var pass = (document.getElementById('loginPass') || {}).value || '';
     if (!email || !pass) { cfToast('Missing info', 'Enter your email and password', 'bad'); return; }
     jpost('/auth/login', { email: email, password: pass }).then(function (r) {
-      if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; window.CF.user = r.data.user; enterApp(); applyIdentity(); refreshAll(); }
+      if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; window.CF.user = r.data.user; enterApp(); applyIdentity(); refreshAll().then(cfApplyViewMode); }
       else if (r.status === 401) cfToast('Wrong email or password', 'Check your credentials and try again', 'bad');
       else if (r.status >= 500 || r.status === 0) cfToast('Server problem', 'A ContentFlow service is down — see status below', 'bad');
       else cfToast('Sign in failed', (r.data && r.data.error) || ('Unexpected response (HTTP ' + r.status + ')'), 'bad');
@@ -6145,7 +6161,7 @@ nav('overview');
       var ws = ((document.getElementById('suWorkspace') || {}).value || '').trim();
       if (!email || !pass) { cfToast('Missing info', 'Enter an email and password', 'bad'); return; }
       jpost('/auth/signup', { email: email, password: pass, name: name, workspace: ws }).then(function (r) {
-        if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; window.CF.user = r.data.user; enterApp(); applyIdentity(); refreshAll(); }
+        if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; window.CF.user = r.data.user; enterApp(); applyIdentity(); refreshAll().then(cfApplyViewMode); }
         else cfToast('Sign up failed', (r.data && r.data.error) || 'Could not create account', 'bad');
       }).catch(function () { cfToast('Cannot reach ContentFlow', 'The platform is unreachable — see status below', 'bad'); });
     };
