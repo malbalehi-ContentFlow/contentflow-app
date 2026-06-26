@@ -6077,6 +6077,10 @@ nav('overview');
   var ADMIN_KEY = 'sk_live_demo', SDK_KEY = 'pk_live_demo';
   window.CF = { API: API, token: null };
 
+  // persist the session so a refresh doesn't log you out
+  function saveSession() { try { localStorage.setItem('cf_session', JSON.stringify({ token: window.CF.token, user: window.CF.user })); } catch (e) {} }
+  function clearSession() { try { localStorage.removeItem('cf_session'); } catch (e) {} }
+
   function api(path, opts) {
     return fetch(API + path, opts || {}).then(function (r) {
       return r.json().catch(function () { return {}; })
@@ -6126,7 +6130,10 @@ nav('overview');
     var initials = (u.name || u.email || '?').trim().split(/\s+/).map(function (s) { return s[0] || ''; }).slice(0, 2).join('').toUpperCase();
     var nEl = document.querySelector('#appShell .sb-uinfo .n'); if (nEl) nEl.textContent = first;
     var rEl = document.querySelector('#appShell .sb-uinfo .r'); if (rEl) rEl.textContent = u.workspace || 'My workspace';
-    var av = document.querySelector('#appShell .avatar'); if (av) av.textContent = initials || 'U';
+    // real profile everywhere: all avatars, the top-right user menu name/email
+    document.querySelectorAll('#appShell .avatar').forEach(function (a) { a.textContent = initials || 'U'; });
+    var umN = document.querySelector('#appShell .um-n'); if (umN) umN.textContent = u.name || first;
+    var umE = document.querySelector('#appShell .um-e'); if (umE) umE.textContent = (u.email || '') + ' · Admin';
     // the "VIEW AS" role-preview switcher is an internal tool — demo workspace only
     var pill = document.getElementById('viewAsPill');
     if (pill) pill.style.display = (u.workspaceId === 'ws_demo') ? '' : 'none';
@@ -6150,7 +6157,7 @@ nav('overview');
     var pass = (document.getElementById('loginPass') || {}).value || '';
     if (!email || !pass) { cfToast('Missing info', 'Enter your email and password', 'bad'); return; }
     jpost('/auth/login', { email: email, password: pass }).then(function (r) {
-      if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; window.CF.user = r.data.user; enterApp(); applyIdentity(); refreshAll().then(cfApplyViewMode); }
+      if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; window.CF.user = r.data.user; saveSession(); enterApp(); applyIdentity(); refreshAll().then(cfApplyViewMode); }
       else if (r.status === 401) cfToast('Wrong email or password', 'Check your credentials and try again', 'bad');
       else if (r.status >= 500 || r.status === 0) cfToast('Server problem', 'A ContentFlow service is down — see status below', 'bad');
       else cfToast('Sign in failed', (r.data && r.data.error) || ('Unexpected response (HTTP ' + r.status + ')'), 'bad');
@@ -6164,7 +6171,7 @@ nav('overview');
       var ws = ((document.getElementById('suWorkspace') || {}).value || '').trim();
       if (!email || !pass) { cfToast('Missing info', 'Enter an email and password', 'bad'); return; }
       jpost('/auth/signup', { email: email, password: pass, name: name, workspace: ws }).then(function (r) {
-        if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; window.CF.user = r.data.user; enterApp(); applyIdentity(); refreshAll().then(cfApplyViewMode); }
+        if (r.ok && r.data && r.data.token) { window.CF.token = r.data.token; window.CF.user = r.data.user; saveSession(); enterApp(); applyIdentity(); refreshAll().then(cfApplyViewMode); }
         else cfToast('Sign up failed', (r.data && r.data.error) || 'Could not create account', 'bad');
       }).catch(function () { cfToast('Cannot reach ContentFlow', 'The platform is unreachable — see status below', 'bad'); });
     };
@@ -6552,6 +6559,7 @@ nav('overview');
     var u = window.CF && window.CF.user;
     if (!u || u.workspaceId === 'ws_demo') return;
     var brand = u.workspace || 'My workspace';
+    var first = (u.name || u.email || '').trim().split(/\s+/)[0] || 'there';
     var root = document.getElementById('appShell'); if (!root) return;
     var rx = /AlFalah Bank|AlFalah|دي ٣٦٠/g;
     var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null), nodes = [], n;
@@ -6559,8 +6567,13 @@ nav('overview');
     nodes.forEach(function (t) {
       var p = t.parentNode; if (!p) return;
       var nm = p.nodeName; if (nm === 'SCRIPT' || nm === 'STYLE') return;
+      var s = t.nodeValue;
       rx.lastIndex = 0;
-      if (rx.test(t.nodeValue)) { rx.lastIndex = 0; t.nodeValue = t.nodeValue.replace(rx, brand); }
+      if (rx.test(s)) { rx.lastIndex = 0; s = s.replace(rx, brand); }
+      // replace the demo account identity with the real signed-in user
+      if (s.indexOf('mohammed@alfalah.sa') !== -1) s = s.replace(/mohammed@alfalah\.sa/g, u.email || '');
+      if (s.indexOf('Good morning, Mohammed') !== -1) s = s.replace(/Good morning, Mohammed/g, 'Good morning, ' + first);
+      if (s !== t.nodeValue) t.nodeValue = s;
     });
   }
   function cfRebrandSoon() { clearTimeout(_rebrandTimer); _rebrandTimer = setTimeout(cfRebrand, 60); }
@@ -6571,6 +6584,66 @@ nav('overview');
     new MutationObserver(function () {
       if (window.CF && window.CF.user && window.CF.user.workspaceId !== 'ws_demo') cfRebrandSoon();
     }).observe(root, { childList: true, subtree: true, characterData: true });
+  })();
+
+  /* ===== approve actions persist to the backend (publish -> live) ===== */
+  if (typeof window.blkApproveDo === 'function') {
+    var _blkApproveDo = window.blkApproveDo;
+    window.blkApproveDo = function (ii) {
+      _blkApproveDo(ii);
+      var blk = (typeof curBlock !== 'undefined') ? curBlock : null;
+      var key = (typeof curKey !== 'undefined') ? curKey : null;
+      var inst = blk ? blk.instances[ii] : null;
+      if (inst && inst._id && key) jpost('/admin/blocks/' + key + '/instances/' + inst._id + '/publish', {}, adminHeaders());
+    };
+  }
+  if (typeof window.campApproveDo === 'function') {
+    var _campApproveDo = window.campApproveDo;
+    window.campApproveDo = function (i) {
+      var c = (typeof campaigns !== 'undefined') ? campaigns[i] : null;
+      _campApproveDo(i);
+      if (c && c._id) jpost('/admin/campaigns/' + c._id + '/publish', {}, adminHeaders());
+    };
+  }
+
+  /* ===== persist theme + accent across refreshes ===== */
+  if (typeof window.setTheme === 'function') {
+    var _setTheme = window.setTheme;
+    window.setTheme = function (t) { _setTheme(t); try { localStorage.setItem('cf_theme', t); } catch (e) {} };
+  }
+  if (typeof window.setAccent === 'function') {
+    var _setAccent = window.setAccent;
+    window.setAccent = function (c) { _setAccent(c); try { localStorage.setItem('cf_accent', c); } catch (e) {} };
+  }
+  try { var _th = localStorage.getItem('cf_theme'); if (_th && typeof window.setTheme === 'function') window.setTheme(_th); } catch (e) {}
+  try { var _ac = localStorage.getItem('cf_accent'); if (_ac && typeof window.setAccent === 'function') window.setAccent(_ac); } catch (e) {}
+
+  /* ===== sign out clears the persisted session ===== */
+  if (typeof window.signOut === 'function') {
+    var _signOut = window.signOut;
+    window.signOut = function () { clearSession(); window.CF.token = null; window.CF.user = null; _signOut(); };
+  }
+
+  /* ===== stay signed in across refreshes (optimistic, then validate) ===== */
+  (function autoLogin() {
+    var raw; try { raw = localStorage.getItem('cf_session'); } catch (e) { return; }
+    if (!raw) return;
+    var s; try { s = JSON.parse(raw); } catch (e) { return; }
+    if (!s || !s.token) return;
+    window.CF.token = s.token; window.CF.user = s.user;
+    enterApp(); applyIdentity(); refreshAll().then(cfApplyViewMode);   // enter immediately, no flash
+    fetch(API + '/auth/me', { headers: { 'Authorization': 'Bearer ' + s.token } })
+      .then(function (r) {
+        if (r.status === 401) {            // token actually invalid -> back to login
+          clearSession(); window.CF.token = null; window.CF.user = null;
+          var lp = document.getElementById('loginPage'); var as = document.getElementById('appShell');
+          if (lp) lp.style.display = ''; if (as) as.style.display = 'none';
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
+      .then(function (d) { if (d && d.user) { window.CF.user = d.user; saveSession(); applyIdentity(); } })
+      .catch(function () {});            // offline: keep the cached session
   })();
 
   console.log('ContentFlow backend integration active →', API);
