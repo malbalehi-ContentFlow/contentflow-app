@@ -6313,6 +6313,35 @@ nav('overview');
       origNav(section);
       if (section === 'campaigns') loadCampaigns();
       if (section === 'blocks') loadBlocks();
+      if (section === 'content') loadAssets();
+    };
+  }
+
+  /* ---- Content Library = real media library (uploads hosted on the server) ---- */
+  function loadAssets() {
+    return api('/admin/assets', { headers: adminHeaders() }).then(function (r) {
+      if (!r.ok || !r.data || !Array.isArray(r.data.assets) || typeof ASSETS === 'undefined') return;
+      ASSETS.length = 0;
+      r.data.assets.forEach(function (a) {
+        ASSETS.push({ n: a.name, t: 'image', g: 'url(' + a.url + ')', url: a.url,
+          m: ((a.kind || 'image').split('/')[1] || 'img').toUpperCase() + ' · ' + Math.round((a.size || 0) / 1024) + ' KB' });
+      });
+      if (typeof curSection !== 'undefined' && curSection === 'content' && typeof renderContent === 'function') renderContent();
+    }).catch(function () {});
+  }
+  if (typeof window.assetUpload === 'function') {
+    window.assetUpload = function (e) {
+      var files = [].slice.call((e.target && e.target.files) || []); if (!files.length) return;
+      var pending = files.length;
+      files.forEach(function (f) {
+        var rd = new FileReader();
+        rd.onload = function (ev) {
+          jpost('/admin/assets', { name: f.name, dataUrl: ev.target.result }, adminHeaders()).then(function () {
+            if (--pending === 0) { loadAssets(); if (typeof showToast === 'function') showToast(files.length + ' asset' + (files.length > 1 ? 's' : '') + ' uploaded', 'hosted on ContentFlow'); }
+          });
+        };
+        rd.readAsDataURL(f);
+      });
     };
   }
 
@@ -6477,18 +6506,32 @@ nav('overview');
     if (!rec || rec._id) return;
     jpost('/admin/campaigns', mapCamp(rec), adminHeaders()).then(function (r) { if (r.ok && r.data && r.data.id) rec._id = r.data.id; });
   }
+  // Upload any inline base64 image in a block's values to the media library and
+  // replace it with the small hosted URL — so we never store/serve megabyte blobs.
+  function hostImages(val) {
+    if (!val) return Promise.resolve(val);
+    var keys = Object.keys(val).filter(function (k) { return typeof val[k] === 'string' && /data:image\//.test(val[k]); });
+    if (!keys.length) return Promise.resolve(val);
+    return Promise.all(keys.map(function (k) {
+      var dataUrl = String(val[k]).replace(/^url\((['"]?)([\s\S]*?)\1\)$/, '$2');   // strip url() wrapper
+      return jpost('/admin/assets', { name: 'block-image', dataUrl: dataUrl }, adminHeaders())
+        .then(function (r) { if (r.ok && r.data && r.data.url) val[k] = 'url(' + r.data.url + ')'; });
+    })).then(function () { return val; });
+  }
   function cfCreateBlockInstance(key, inst) {
     if (!inst || inst._id) return;
-    var body = { title: inst.title, seg: inst.seg, status: inst.status, val: inst.val };
-    var def = (typeof BLOCKS !== 'undefined' && BLOCKS[key]) ? BLOCKS[key] : null;
-    if (def) {   // let the backend auto-register this block type with real metadata
-      body.blockName = def.name || key;
-      body.screen = def.screen || '';
-      body.blank = def.blank || {};
-      body.fields = (def.fields || []).map(function (f) { return { id: f.id, tag: f.v || f.tag || ('#' + f.id), type: f.type }; });
-    }
-    jpost('/admin/blocks/' + key + '/instances', body, adminHeaders())
-      .then(function (r) { if (r.ok && r.data && r.data.id) { inst._id = r.data.id; inst._key = key; } });
+    hostImages(inst.val).then(function () {
+      var body = { title: inst.title, seg: inst.seg, status: inst.status, val: inst.val };
+      var def = (typeof BLOCKS !== 'undefined' && BLOCKS[key]) ? BLOCKS[key] : null;
+      if (def) {   // let the backend auto-register this block type with real metadata
+        body.blockName = def.name || key;
+        body.screen = def.screen || '';
+        body.blank = def.blank || {};
+        body.fields = (def.fields || []).map(function (f) { return { id: f.id, tag: f.v || f.tag || ('#' + f.id), type: f.type }; });
+      }
+      jpost('/admin/blocks/' + key + '/instances', body, adminHeaders())
+        .then(function (r) { if (r.ok && r.data && r.data.id) { inst._id = r.data.id; inst._key = key; } });
+    });
   }
 
   if (typeof window.campCommit === 'function') {
@@ -6530,7 +6573,7 @@ nav('overview');
       if (!key || !blk || typeof edInstIdx === 'undefined' || edInstIdx < 0) return;
       var inst = blk.instances[edInstIdx];
       if (!inst) return;
-      if (inst._id) cfPatch('/admin/blocks/' + key + '/instances/' + inst._id, { title: inst.title, seg: inst.seg, status: inst.status, val: inst.val });
+      if (inst._id) hostImages(inst.val).then(function () { cfPatch('/admin/blocks/' + key + '/instances/' + inst._id, { title: inst.title, seg: inst.seg, status: inst.status, val: inst.val }); });
       else cfCreateBlockInstance(key, inst);
     };
   }
